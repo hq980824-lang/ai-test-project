@@ -1,0 +1,43 @@
+name: Cursor AI Review + 企业微信推送
+
+on:
+  push:
+    branches: [dev, test, main] # 你想触发的分支
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get changed files
+        id: files
+        run: echo "changed=$(git diff --name-only HEAD^ HEAD)" >> $GITHUB_OUTPUT
+
+      - name: AI Code Review (Cursor 风格)
+        id: review
+        uses: edmundhung/ai-code-reviewer@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        with:
+          model: gpt-4o-mini
+          style: cursor
+
+      - name: 发送结果到企业微信
+        uses: edmundhung/wechat-work-webhook@v1
+        with:
+          webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
+          title: "✅ Cursor AI 代码审查结果"
+          content: |
+            分支：${{ github.ref }}
+            提交人：${{ github.actor }}
+            变更文件：${{ steps.files.outputs.changed }}
+
+            🧾 AI 审查意见：
+            ${{ steps.review.outputs.comment }}
