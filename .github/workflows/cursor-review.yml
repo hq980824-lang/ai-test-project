@@ -1,5 +1,4 @@
 name: AI Code Review + 企业微信推送
-
 on:
   push:
     branches: [ dev, test, main, master ]
@@ -7,43 +6,42 @@ on:
 jobs:
   review:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
-
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 2 }
 
       - name: 获取代码差异
         id: diff
         run: |
           echo "content<<EOF" >> $GITHUB_OUTPUT
-          git diff HEAD^ HEAD | head -300 >> $GITHUB_OUTPUT
+          git diff HEAD^ HEAD | head -200 >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: 通义千问 AI 审查
+      - name: 通义千问 AI 审查（官方兼容版）
         id: ai
         env:
           QWEN_KEY: ${{ secrets.OPENAI_API_KEY }}
           DIFF: ${{ steps.diff.outputs.content }}
         run: |
-          curl -s https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions \
+          curl -s https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation \
             -H "Authorization: Bearer $QWEN_KEY" \
             -H "Content-Type: application/json" \
             -d '{
               "model": "qwen-plus",
-              "messages": [
-                {"role":"system","content":"你是专业前端代码审查员，简洁中文输出问题、风险、优化建议"},
-                {"role":"user","content":"'"$DIFF"'"}
-              ],
-              "max_tokens": 800
-            }' > response.json
+              "input": {
+                "messages": [
+                  {"role":"system","content":"你是前端代码审查员，简洁中文输出问题、风险、优化建议"},
+                  {"role":"user","content":"'"$DIFF"'"}
+                ]
+              },
+              "parameters": {"max_tokens":800}
+            }' > res.json
 
-          result=$(cat response.json | jq -r '.choices[0].message.content // "AI审查失败"')
+          result=$(jq -r '.output.text // "AI审查失败"' res.json)
           echo "result=$result" >> $GITHUB_OUTPUT
+          cat res.json
 
-      - name: 推送到企业微信
+      - name: 发送企业微信
         env:
           WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
           RESULT: ${{ steps.ai.outputs.result }}
@@ -55,6 +53,6 @@ jobs:
             -d '{
               "msgtype": "text",
               "text": {
-                "content": "🚀AI代码审查完成\n分支：'"$BRANCH"'\n提交人：'"$AUTHOR"'\n\n🔍审查结果：\n'"$RESULT"'"
+                "content": "✅ AI审查完成\n分支：'"$BRANCH"'\n提交人：'"$AUTHOR"'\n\n🔍 审查结果：\n'"$RESULT"'"
               }
             }'
