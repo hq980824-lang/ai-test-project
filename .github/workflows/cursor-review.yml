@@ -1,87 +1,56 @@
-name: AI Code Review + 企业微信推送
-on:
-  push:
-    branches: [ dev, test, main, master ]
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with: 
-          fetch-depth: 2 # 确保能获取到上一次提交
-
-      - name: 获取代码差异
-        id: diff
-        run: |
-          # 获取差异并保存为文件，避免命令行长度限制和转义问题
-          git diff HEAD^ HEAD > diff_output.txt
-          # 如果差异过大，截取前 300 行以防超时或令牌超限
-          head -n 300 diff_output.txt > diff_limited.txt
-          echo "diff_file=diff_limited.txt" >> $GITHUB_OUTPUT
-
-      - name: 通义千问 AI 审查 (安全版)
+      - name: 通义千问 AI 审查 (毒舌严格版)
         id: ai
         env:
-          # ⚠️ 请确保在 GitHub Secrets 中配置的是阿里云百炼的 API Key
-          # 建议将 Secret 名字改为 ALIYUN_API_KEY 以示区分
           QWEN_KEY: ${{ secrets.OPENAI_API_KEY }} 
         run: |
-          # 1. 读取差异内容
           DIFF_CONTENT=$(cat ${{ steps.diff.outputs.diff_file }})
           
-          # 2. 使用 jq 安全地构建 JSON 负载 (自动处理换行、引号转义)
-          # 这样即使代码里有双引号也不会破坏 JSON 结构
+          # 如果差异内容为空，直接跳过
+          if [ -z "$DIFF_CONTENT" ]; then
+            echo "result=⚠️ 本次提交无有效代码差异，无需审查。" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           jq -n --arg diff "$DIFF_CONTENT" '{
             "model": "qwen-plus",
             "input": {
               "messages": [
-                {"role": "system", "content": "你是资深前端代码审查员。请用简洁的中文指出代码中的：1. 潜在 Bug 2. 安全风险 3. 性能优化建议。如果没有重大问题，回复“代码质量良好”."},
+                {
+                  "role": "system", 
+                  "content": "你是一位拥有 10 年经验的前端架构师兼安全专家，以【严厉、挑剔、直击要害】著称。你的任务是审查代码差异。
+                  
+                  【强制规则】：
+                  1. **禁止**只回复‘代码质量良好’或‘无明显问题’。即使代码看起来没问题，也必须从‘可读性、命名规范、潜在边界情况、性能微优化’中至少找出 2 点改进建议。
+                  2. **优先关注**：安全风险 (XSS/注入)、逻辑漏洞、内存泄漏风险、硬编码、复杂的嵌套逻辑。
+                  3. **输出格式**：
+                     - 🔴 严重问题：(如果有)
+                     - 🟡 建议优化：(必须有，哪怕是很小的点)
+                     - 💡 最佳实践：(可选)
+                  4. 语气要专业且直接，不要寒暄。
+                  5. 如果本次提交确实极其完美（几乎不可能），请指出‘本次提交无可挑剔，但建议补充单元测试覆盖以下场景...'。"
+                },
                 {"role": "user", "content": $diff}
               ]
             },
-            "parameters": {"max_tokens": 1000}
+            "parameters": {"max_tokens": 1000, "temperature": 0.7}
           }' > payload.json
 
-          # 3. 发送请求
           RESPONSE=$(curl -s -X POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation \
             -H "Authorization: Bearer $QWEN_KEY" \
             -H "Content-Type: application/json" \
             -d @payload.json)
 
-          # 4. 调试：打印原始响应以便排查 (如果失败看这里)
           echo "API Response:"
           echo "$RESPONSE"
 
-          # 5. 解析结果
-          # 检查是否有 error 字段
           if echo "$RESPONSE" | jq -e '.output.text' > /dev/null 2>&1; then
             RESULT=$(echo "$RESPONSE" | jq -r '.output.text')
+            # 二次检查：如果 AI 依然头铁回复“良好”，我们手动追加一条警告
+            if echo "$RESULT" | grep -q "良好\|没问题\|Perfect"; then
+               RESULT="$RESULT\n\n⚠️ 注：AI 认为代码完美，但建议人工复核是否有遗漏的边界条件。"
+            fi
             echo "result=$RESULT" >> $GITHUB_OUTPUT
-            echo "✅ AI 审查成功"
           else
-            # 提取错误信息
             ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .code // "未知错误"')
-            echo "::error::AI 审查失败：$ERROR_MSG"
             echo "result=❌ AI 审查失败：$ERROR_MSG" >> $GITHUB_OUTPUT
           fi
-
-      - name: 发送企业微信
-        if: always() # 即使 AI 失败也发送通知
-        env:
-          WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
-          RESULT: ${{ steps.ai.outputs.result }}
-          BRANCH: ${{ github.ref_name }}
-          AUTHOR: ${{ github.actor }}
-        run: |
-          # 对结果进行简单的换行处理，防止企微消息格式错乱（可选）
-          FORMATTED_RESULT=$(echo "$RESULT" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
-          
-          curl -s "$WEBHOOK" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"msgtype\": \"text\",
-              \"text\": {
-                \"content\": \"✅ AI 审查完成\n分支：${BRANCH}\n提交人：${AUTHOR}\n\n🔍 审查结果：\n${FORMATTED_RESULT}\"
-              }
-            }"
