@@ -2,53 +2,59 @@ name: AI Code Review + 企业微信推送
 
 on:
   push:
-    branches:
-      - dev
-      - test
-      - main
-      - master
+    branches: [ dev, test, main, master ]
 
 jobs:
-  ai-review:
+  review:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 3
 
     steps:
-      - name: 拉取代码
+      - name: 检出代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: 获取修改文件
+      - name: 获取代码差异
         id: diff
         run: |
-          echo "files=$(git diff --name-only HEAD^ HEAD)" >> $GITHUB_OUTPUT
-
-      - name: 获取代码差异
-        id: gitdiff
-        run: |
-          echo "diffcontent<<EOF" >> $GITHUB_OUTPUT
-          git diff HEAD^ HEAD >> $GITHUB_OUTPUT
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          git diff HEAD^ HEAD | head -300 >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: AI 代码审查
+      - name: 通义千问 AI 审查
         id: ai
-        uses: x-dr/ai-code-review@main
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-          MODEL: qwen-plus
-          PROMPT: 你是专业前端代码审查员，请用中文简洁指出代码问题、风险、优化建议。
+          QWEN_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DIFF: ${{ steps.diff.outputs.content }}
+        run: |
+          curl -s https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions \
+            -H "Authorization: Bearer $QWEN_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "model": "qwen-plus",
+              "messages": [
+                {"role":"system","content":"你是专业前端代码审查员，简洁中文输出问题、风险、优化建议"},
+                {"role":"user","content":"'"$DIFF"'"}
+              ],
+              "max_tokens": 800
+            }' > response.json
 
-      - name: 发送结果到企业微信
-        uses: charmcter/wechat-work-webhook-action@main
-        with:
-          webhook: ${{ secrets.WECHAT_WEBHOOK }}
-          content: |
-            🚀 AI 代码审查完成
-            分支：${{ github.ref }}
-            提交人：${{ github.actor }}
-            修改文件：${{ steps.diff.outputs.files }}
+          result=$(cat response.json | jq -r '.choices[0].message.content // "AI审查失败"')
+          echo "result=$result" >> $GITHUB_OUTPUT
 
-            🔍 AI 审查意见：
-            ${{ steps.ai.outputs.result }}
+      - name: 推送到企业微信
+        env:
+          WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
+          RESULT: ${{ steps.ai.outputs.result }}
+          BRANCH: ${{ github.ref_name }}
+          AUTHOR: ${{ github.actor }}
+        run: |
+          curl -s "$WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "msgtype": "text",
+              "text": {
+                "content": "🚀AI代码审查完成\n分支：'"$BRANCH"'\n提交人：'"$AUTHOR"'\n\n🔍审查结果：\n'"$RESULT"'"
+              }
+            }'
