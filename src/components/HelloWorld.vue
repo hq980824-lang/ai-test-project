@@ -51,9 +51,7 @@ const count = ref(0)
         <li>
           
         </li>
-        <li>
-        
-        </li>
+     
         <li>
           <a href="https://x.com/vite_js" target="_blank">
             <svg class="button-icon" role="presentation" aria-hidden="true">
