@@ -1,3 +1,24 @@
+name: AI Code Review + 企业微信推送
+
+on:
+  push:
+    branches: [ dev, test, main, master ]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: 
+          fetch-depth: 2
+
+      - name: 获取代码差异
+        id: diff
+        run: |
+          git diff HEAD^ HEAD > diff_output.txt
+          head -n 300 diff_output.txt > diff_limited.txt
+          echo "diff_file=diff_limited.txt" >> $GITHUB_OUTPUT
+
       - name: 通义千问 AI 审查 (毒舌严格版)
         id: ai
         env:
@@ -5,7 +26,6 @@
         run: |
           DIFF_CONTENT=$(cat ${{ steps.diff.outputs.diff_file }})
           
-          # 如果差异内容为空，直接跳过
           if [ -z "$DIFF_CONTENT" ]; then
             echo "result=⚠️ 本次提交无有效代码差异，无需审查。" >> $GITHUB_OUTPUT
             exit 0
@@ -17,17 +37,7 @@
               "messages": [
                 {
                   "role": "system", 
-                  "content": "你是一位拥有 10 年经验的前端架构师兼安全专家，以【严厉、挑剔、直击要害】著称。你的任务是审查代码差异。
-                  
-                  【强制规则】：
-                  1. **禁止**只回复‘代码质量良好’或‘无明显问题’。即使代码看起来没问题，也必须从‘可读性、命名规范、潜在边界情况、性能微优化’中至少找出 2 点改进建议。
-                  2. **优先关注**：安全风险 (XSS/注入)、逻辑漏洞、内存泄漏风险、硬编码、复杂的嵌套逻辑。
-                  3. **输出格式**：
-                     - 🔴 严重问题：(如果有)
-                     - 🟡 建议优化：(必须有，哪怕是很小的点)
-                     - 💡 最佳实践：(可选)
-                  4. 语气要专业且直接，不要寒暄。
-                  5. 如果本次提交确实极其完美（几乎不可能），请指出‘本次提交无可挑剔，但建议补充单元测试覆盖以下场景...'。"
+                  "content": "你是一位拥有 10 年经验的前端架构师兼安全专家，以【严厉、挑剔、直击要害】著称。你的任务是审查代码差异。\n\n【强制规则】：\n1. **禁止**只回复‘代码质量良好’或‘无明显问题’。即使代码看起来没问题，也必须从‘可读性、命名规范、潜在边界情况、性能微优化’中至少找出 2 点改进建议。\n2. **优先关注**：安全风险 (XSS/注入)、逻辑漏洞、内存泄漏风险、硬编码、复杂的嵌套逻辑。\n3. **输出格式**：\n   - 🔴 严重问题：(如果有)\n   - 🟡 建议优化：(必须有，哪怕是很小的点)\n   - 💡 最佳实践：(可选)\n4. 语气要专业且直接，不要寒暄。\n5. 如果本次提交确实极其完美，请指出‘本次提交无可挑剔，但建议补充单元测试覆盖以下场景...'。"
                 },
                 {"role": "user", "content": $diff}
               ]
@@ -45,7 +55,6 @@
 
           if echo "$RESPONSE" | jq -e '.output.text' > /dev/null 2>&1; then
             RESULT=$(echo "$RESPONSE" | jq -r '.output.text')
-            # 二次检查：如果 AI 依然头铁回复“良好”，我们手动追加一条警告
             if echo "$RESULT" | grep -q "良好\|没问题\|Perfect"; then
                RESULT="$RESULT\n\n⚠️ 注：AI 认为代码完美，但建议人工复核是否有遗漏的边界条件。"
             fi
@@ -54,3 +63,22 @@
             ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .code // "未知错误"')
             echo "result=❌ AI 审查失败：$ERROR_MSG" >> $GITHUB_OUTPUT
           fi
+
+      - name: 发送企业微信
+        if: always()
+        env:
+          WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
+          RESULT: ${{ steps.ai.outputs.result }}
+          BRANCH: ${{ github.ref_name }}
+          AUTHOR: ${{ github.actor }}
+        run: |
+          FORMATTED_RESULT=$(echo "$RESULT" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
+          
+          curl -s "$WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"msgtype\": \"text\",
+              \"text\": {
+                \"content\": \"✅ AI 审查完成\n分支：${BRANCH}\n提交人：${AUTHOR}\n\n🔍 审查结果：\n${FORMATTED_RESULT}\"
+              }
+            }"
