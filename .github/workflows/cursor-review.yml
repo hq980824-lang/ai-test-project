@@ -19,7 +19,7 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: 获取本次修改文件
+      - name: 获取修改文件
         id: diff
         run: |
           echo "files=$(git diff --name-only HEAD^ HEAD)" >> $GITHUB_OUTPUT
@@ -31,26 +31,24 @@ jobs:
           git diff HEAD^ HEAD >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: 通义千问 AI Code Review
+      - name: AI 代码审查
         id: ai
         uses: x-dr/ai-code-review@main
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           MODEL: qwen-plus
-          PROMPT: |
-            你是Cursor风格的AI代码审查员，请用中文审查以下代码：
-            指出问题、风险、优化建议，简洁明了。
+          PROMPT: 你是专业前端代码审查员，请用中文简洁指出代码问题、风险、优化建议。
 
       - name: 发送结果到企业微信
         uses: charmcter/wechat-work-webhook-action@main
         with:
           webhook: ${{ secrets.WECHAT_WEBHOOK }}
-            content: |
+          content: |
             🚀 AI 代码审查完成
             分支：${{ github.ref }}
             提交人：${{ github.actor }}
             修改文件：${{ steps.diff.outputs.files }}
-            
+
             🔍 AI 审查意见：
             ${{ steps.ai.outputs.result }}
