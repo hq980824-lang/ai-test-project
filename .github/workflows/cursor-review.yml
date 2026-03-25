@@ -16,7 +16,7 @@ jobs:
           git diff HEAD^ HEAD > diff_output.txt
           head -n 300 diff_output.txt > diff_limited.txt
 
-      - name: AI 审查 + 推送企业微信（一步完成，彻底避坑）
+      - name: AI 审查 + 企业微信推送
         env:
           QWEN_KEY: ${{ secrets.OPENAI_API_KEY }}
           WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
@@ -25,10 +25,9 @@ jobs:
           REPO: ${{ github.repository }}
           COMMIT: ${{ github.sha }}
         run: |
-          # 1. 读取差异
           DIFF_CONTENT=$(cat diff_limited.txt)
-          
-          # 2. 构建 AI 请求
+
+          # AI 请求
           jq -n --arg diff "$DIFF_CONTENT" '{
             "model": "qwen-plus",
             "input": {
@@ -43,13 +42,11 @@ jobs:
             "parameters": {"max_tokens": 1200}
           }' > payload.json
 
-          # 3. 调用 AI
           RESPONSE=$(curl -s -X POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation \
             -H "Authorization: Bearer $QWEN_KEY" \
             -H "Content-Type: application/json" \
             -d @payload.json)
 
-          # 4. 解析结果
           if echo "$RESPONSE" | jq -e '.output.text' > /dev/null 2>&1; then
             RESULT=$(echo "$RESPONSE" | jq -r '.output.text')
           else
@@ -57,15 +54,15 @@ jobs:
             RESULT="❌ AI 审查失败：$ERROR_MSG"
           fi
 
-          # 5. 转义特殊字符（避免破坏 JSON）
-          FORMATTED_RESULT=$(echo "$RESULT" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed 's/\n/\\n/g')
+          # 安全转义
+          ESCAPED_RESULT=$(echo "$RESULT" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed 's/\n/\\n/g')
 
-          # 6. 发送企业微信
+          # 企业微信 JSON 格式输出（干净、标准、不会报错）
           curl -s "$WEBHOOK" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"msgtype\": \"text\",
-              \"text\": {
-                \"content\": \"📌 项目：${REPO}\\n📤 分支：${BRANCH}\\n👤 提交人：${AUTHOR}\\n🔖 提交ID：${COMMIT:0:8}\\n━━━━━━━━━━━━━━━\\n📝 AI 代码审查报告：\\n${FORMATTED_RESULT}\"
+            -d '{
+              "msgtype": "text",
+              "text": {
+                "content": "📌 项目：'"${REPO}"'\n📤 分支：'"${BRANCH}"'\n👤 提交人：'"${AUTHOR}"'\n🔖 提交ID：'"${COMMIT:0:8}"'\n━━━━━━━━━━━━━━━\n📝 AI 代码审查报告：\n'"${ESCAPED_RESULT}"'"
               }
-            }"
+            }'
