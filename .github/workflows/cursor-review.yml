@@ -2,7 +2,7 @@ name: Cursor AI Review + 企业微信推送
 
 on:
   push:
-    branches: [dev, test, main] # 你想触发的分支
+    branches: [ dev, test, main ]
 
 jobs:
   review:
@@ -19,25 +19,29 @@ jobs:
         id: files
         run: echo "changed=$(git diff --name-only HEAD^ HEAD)" >> $GITHUB_OUTPUT
 
-      - name: AI Code Review (Cursor 风格)
+      - name: AI Code Review (Qwen 通义千问)
         id: review
         uses: edmundhung/ai-code-reviewer@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # 👇 这里换成通义千问的 Key
+          OPENAI_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          # 👇 必须指定通义千问的兼容地址
+          OPENAI_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
         with:
-          model: gpt-4o-mini
+          # 👇 模型换成 qwen-plus / qwen-turbo
+          model: qwen-plus
           style: cursor
 
       - name: 发送结果到企业微信
         uses: edmundhung/wechat-work-webhook@v1
         with:
           webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
-          title: "✅ Cursor AI 代码审查结果"
+          title: "✅ Cursor AI 代码审查结果（通义千问）"
           content: |
             分支：${{ github.ref }}
             提交人：${{ github.actor }}
             变更文件：${{ steps.files.outputs.changed }}
-
+            
             🧾 AI 审查意见：
             ${{ steps.review.outputs.comment }}
