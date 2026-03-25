@@ -1,5 +1,4 @@
 name: AI Code Review + 企业微信推送
-
 on:
   push:
     branches: [ dev, test, main, master ]
@@ -9,76 +8,58 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: 
-          fetch-depth: 2
+        with: { fetch-depth: 2 }
 
       - name: 获取代码差异
         id: diff
         run: |
-          git diff HEAD^ HEAD > diff_output.txt
-          head -n 300 diff_output.txt > diff_limited.txt
-          echo "diff_file=diff_limited.txt" >> $GITHUB_OUTPUT
+          echo "content<<EOF" >> $GITHUB_OUTPUT
+          git diff HEAD^ HEAD | head -300 >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: 通义千问 AI 审查 (毒舌严格版)
+      - name: 通义千问 AI 审查（官方完整版）
         id: ai
         env:
-          QWEN_KEY: ${{ secrets.OPENAI_API_KEY }} 
+          QWEN_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DIFF: ${{ steps.diff.outputs.content }}
         run: |
-          DIFF_CONTENT=$(cat ${{ steps.diff.outputs.diff_file }})
-          
-          if [ -z "$DIFF_CONTENT" ]; then
-            echo "result=⚠️ 本次提交无有效代码差异，无需审查。" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          jq -n --arg diff "$DIFF_CONTENT" '{
-            "model": "qwen-plus",
-            "input": {
-              "messages": [
-                {
-                  "role": "system", 
-                  "content": "你是一位拥有 10 年经验的前端架构师兼安全专家，以【严厉、挑剔、直击要害】著称。你的任务是审查代码差异。\n\n【强制规则】：\n1. **禁止**只回复‘代码质量良好’或‘无明显问题’。即使代码看起来没问题，也必须从‘可读性、命名规范、潜在边界情况、性能微优化’中至少找出 2 点改进建议。\n2. **优先关注**：安全风险 (XSS/注入)、逻辑漏洞、内存泄漏风险、硬编码、复杂的嵌套逻辑。\n3. **输出格式**：\n   - 🔴 严重问题：(如果有)\n   - 🟡 建议优化：(必须有，哪怕是很小的点)\n   - 💡 最佳实践：(可选)\n4. 语气要专业且直接，不要寒暄。\n5. 如果本次提交确实极其完美，请指出‘本次提交无可挑剔，但建议补充单元测试覆盖以下场景...'。"
-                },
-                {"role": "user", "content": $diff}
-              ]
-            },
-            "parameters": {"max_tokens": 1000, "temperature": 0.7}
-          }' > payload.json
-
-          RESPONSE=$(curl -s -X POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation \
+          curl -s https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation \
             -H "Authorization: Bearer $QWEN_KEY" \
             -H "Content-Type: application/json" \
-            -d @payload.json)
+            -d '{
+              "model": "qwen-plus",
+              "input": {
+                "messages": [
+                  {
+                    "role":"system",
+                    "content":"你是专业的前端代码审查专家，请按照以下格式输出审查报告：\n1. 代码问题\n2. 潜在风险\n3. 规范建议\n4. 可优化点\n5. 安全性检查\n请使用中文，简洁专业，逐条列出。"
+                  },
+                  {
+                    "role":"user",
+                    "content":"请审查以下代码差异：\n'"$DIFF"'"
+                  }
+                ]
+              },
+              "parameters": {"max_tokens": 1200}
+            }' > res.json
 
-          echo "API Response:"
-          echo "$RESPONSE"
+          result=$(jq -r '.output.text // "AI审查失败，请检查日志"' res.json)
+          echo "result=$result" >> $GITHUB_OUTPUT
+          cat res.json
 
-          if echo "$RESPONSE" | jq -e '.output.text' > /dev/null 2>&1; then
-            RESULT=$(echo "$RESPONSE" | jq -r '.output.text')
-            if echo "$RESULT" | grep -q "良好\|没问题\|Perfect"; then
-               RESULT="$RESULT\n\n⚠️ 注：AI 认为代码完美，但建议人工复核是否有遗漏的边界条件。"
-            fi
-            echo "result=$RESULT" >> $GITHUB_OUTPUT
-          else
-            ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .code // "未知错误"')
-            echo "result=❌ AI 审查失败：$ERROR_MSG" >> $GITHUB_OUTPUT
-          fi
-
-      - name: 发送企业微信
-        if: always()
+      - name: 发送企业微信（完整报告）
         env:
           WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
           RESULT: ${{ steps.ai.outputs.result }}
           BRANCH: ${{ github.ref_name }}
           AUTHOR: ${{ github.actor }}
+          COMMIT: ${{ github.sha }}
         run: |
-          FORMATTED_RESULT=$(echo "$RESULT" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
-          
           curl -s "$WEBHOOK" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"msgtype\": \"text\",
-              \"text\": {
-                \"content\": \"✅ AI 审查完成\n分支：${BRANCH}\n提交人：${AUTHOR}\n\n🔍 审查结果：\n${FORMATTED_RESULT}\"
-              }
-            }"
+            -d '{
+            "msgtype": "text",
+            "text": {
+              "content": "📌 项目：'"$GITHUB_REPOSITORY"'\n📤 分支：'"$BRANCH"'\n👤 提交人：'"$AUTHOR"'\n🔖 提交ID：'"${COMMIT:0:10}"'\n━━━━━━━━━━━━━━━\n📝 AI 代码审查报告：\n'"$RESULT"'"
+            }
+          }'
