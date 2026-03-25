@@ -1,47 +1,56 @@
-name: Cursor AI Review + 企业微信推送
+name: AI Code Review + 企业微信推送
 
 on:
   push:
-    branches: [ dev, test, main ]
+    branches:
+      - dev
+      - test
+      - main
+      - master
 
 jobs:
-  review:
+  ai-review:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
 
     steps:
-      - name: Checkout code
+      - name: 拉取代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Get changed files
-        id: files
-        run: echo "changed=$(git diff --name-only HEAD^ HEAD)" >> $GITHUB_OUTPUT
+      - name: 获取本次修改文件
+        id: diff
+        run: |
+          echo "files=$(git diff --name-only HEAD^ HEAD)" >> $GITHUB_OUTPUT
 
-      - name: AI Code Review (Qwen 通义千问)
-        id: review
-        uses: edmundhung/ai-code-reviewer@main
+      - name: 获取代码差异
+        id: gitdiff
+        run: |
+          echo "diffcontent<<EOF" >> $GITHUB_OUTPUT
+          git diff HEAD^ HEAD >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: 通义千问 AI Code Review
+        id: ai
+        uses: x-dr/ai-code-review@main
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 👇 这里换成通义千问的 Key
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # 👇 必须指定通义千问的兼容地址
           OPENAI_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-        with:
-          # 👇 模型换成 qwen-plus / qwen-turbo
-          model: qwen-plus
-          style: cursor
+          MODEL: qwen-plus
+          PROMPT: |
+            你是Cursor风格的AI代码审查员，请用中文审查以下代码：
+            指出问题、风险、优化建议，简洁明了。
 
       - name: 发送结果到企业微信
-        uses: edmundhung/wechat-work-webhook@v1
+        uses: charmcter/wechat-work-webhook-action@main
         with:
-          webhook-url: ${{ secrets.WECHAT_WEBHOOK }}
-          title: "✅ Cursor AI 代码审查结果（通义千问）"
-          content: |
+          webhook: ${{ secrets.WECHAT_WEBHOOK }}
+            content: |
+            🚀 AI 代码审查完成
             分支：${{ github.ref }}
             提交人：${{ github.actor }}
-            变更文件：${{ steps.files.outputs.changed }}
+            修改文件：${{ steps.diff.outputs.files }}
             
-            🧾 AI 审查意见：
-            ${{ steps.review.outputs.comment }}
+            🔍 AI 审查意见：
+            ${{ steps.ai.outputs.result }}
