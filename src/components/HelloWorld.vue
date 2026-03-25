@@ -49,10 +49,6 @@ const count = ref(0)
       <p>Join the Vite community</p>
       <ul>
         <li>
-          
-        </li>
-     
-        <li>
           <a href="https://x.com/vite_js" target="_blank">
             <svg class="button-icon" role="presentation" aria-hidden="true">
               <use href="/icons.svg#x-icon"></use>

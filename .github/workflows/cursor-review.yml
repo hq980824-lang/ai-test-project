@@ -35,7 +35,7 @@ jobs:
               "messages": [
                 {
                   "role": "system",
-                  "content": "你是资深前端代码审查专家，请按以下格式输出审查报告：\n1. 潜在 Bug\n2. 安全风险\n3. 性能优化建议\n4. 代码规范问题\n"
+                  "content": "你是资深前端代码审查专家，请按以下格式输出审查报告：\n1. 潜在 Bug\n2. 安全风险\n3. 性能优化建议\n4. 代码规范问题\n如果没有重大问题，回复「代码质量良好」。请用简洁中文，逐条列出。"
                 },
                 {
                   "role": "user",
@@ -52,15 +52,15 @@ jobs:
             -H "Content-Type: application/json" \
             -d @payload.json)
 
-          # 4. 调试：打印原始响应
-          echo "API Response:"
-          echo "$RESPONSE"
+          # 4. 调试：注释掉原始响应输出，避免日志格式误判
+          # echo "API Response:"
+          # echo "$RESPONSE"
 
           # 5. 解析结果
           if echo "$RESPONSE" | jq -e '.output.text' > /dev/null 2>&1; then
             RESULT=$(echo "$RESPONSE" | jq -r '.output.text')
             echo "result=$RESULT" >> $GITHUB_OUTPUT
-            echo "✅ AI 审查成功"
+            echo "✅ AI 审查成功" || true
           else
             ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .code // "未知错误"')
             echo "::error::AI 审查失败：$ERROR_MSG"
