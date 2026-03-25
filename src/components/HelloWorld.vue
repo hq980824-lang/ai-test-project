@@ -52,12 +52,7 @@ const count = ref(0)
           
         </li>
         <li>
-          <a href="https://chat.vite.dev/" target="_blank">
-            <svg class="button-icon" role="presentation" aria-hidden="true">
-              <use href="/icons.svg#discord-icon"></use>
-            </svg>
-            Discord
-          </a>
+        
         </li>
         <li>
           <a href="https://x.com/vite_js" target="_blank">
