@@ -12,18 +12,23 @@ jobs:
           fetch-depth: 2
 
       - name: 获取代码差异
-        id: diff
         run: |
           git diff HEAD^ HEAD > diff_output.txt
           head -n 300 diff_output.txt > diff_limited.txt
 
-      - name: 通义千问 AI 审查 (安全版)
-        id: ai
+      - name: AI 审查 + 推送企业微信（一步完成，彻底避坑）
         env:
           QWEN_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
+          BRANCH: ${{ github.ref_name }}
+          AUTHOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
         run: |
+          # 1. 读取差异
           DIFF_CONTENT=$(cat diff_limited.txt)
           
+          # 2. 构建 AI 请求
           jq -n --arg diff "$DIFF_CONTENT" '{
             "model": "qwen-plus",
             "input": {
@@ -38,33 +43,24 @@ jobs:
             "parameters": {"max_tokens": 1200}
           }' > payload.json
 
+          # 3. 调用 AI
           RESPONSE=$(curl -s -X POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation \
             -H "Authorization: Bearer $QWEN_KEY" \
             -H "Content-Type: application/json" \
             -d @payload.json)
 
+          # 4. 解析结果
           if echo "$RESPONSE" | jq -e '.output.text' > /dev/null 2>&1; then
             RESULT=$(echo "$RESPONSE" | jq -r '.output.text')
-            echo "AI_RESULT=$RESULT" >> "$GITHUB_ENV"  # 改用环境变量
-            echo "✅ AI 审查成功" || true
           else
             ERROR_MSG=$(echo "$RESPONSE" | jq -r '.message // .code // "未知错误"')
-            echo "::error::AI 审查失败：$ERROR_MSG"
-            echo "AI_RESULT=❌ AI 审查失败：$ERROR_MSG" >> "$GITHUB_ENV"
+            RESULT="❌ AI 审查失败：$ERROR_MSG"
           fi
 
-      - name: 发送企业微信（美化版）
-        if: always()
-        env:
-          WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
-          RESULT: ${{ env.AI_RESULT }}  # 从环境变量读取
-          BRANCH: ${{ github.ref_name }}
-          AUTHOR: ${{ github.actor }}
-          REPO: ${{ github.repository }}
-          COMMIT: ${{ github.sha }}
-        run: |
+          # 5. 转义特殊字符（避免破坏 JSON）
           FORMATTED_RESULT=$(echo "$RESULT" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | sed 's/\n/\\n/g')
-          
+
+          # 6. 发送企业微信
           curl -s "$WEBHOOK" \
             -H "Content-Type: application/json" \
             -d "{
